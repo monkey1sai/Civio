@@ -1,0 +1,221 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  FLUTTER_VERSION: "3.24.5"
+  POETRY_VERSION: "1.8.4"
+
+jobs:
+  # ========================================================================
+  # Lint and type checking
+  # ========================================================================
+  lint-cloud:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: civio-cloud } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: snok/install-poetry@v1
+        with: { version: "${{ env.POETRY_VERSION }}" }
+      - run: poetry install --no-interaction --no-root
+      - run: poetry run ruff check src/ tests/
+      - run: poetry run ruff format --check src/ tests/
+      - run: poetry run mypy src/ --strict
+      - run: poetry run bandit -r src/ -ll
+
+  lint-flutter:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: civio-app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable }
+      - run: flutter pub get
+      - run: dart format --set-exit-if-changed lib/ test/
+      - run: dart analyze --fatal-infos lib/ test/
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: trufflesecurity/trufflehog@main
+        with: { extra_args: --only-verified }
+
+  # ========================================================================
+  # Unit tests
+  # ========================================================================
+  test-cloud-unit:
+    runs-on: ubuntu-latest
+    needs: [lint-cloud]
+    defaults: { run: { working-directory: civio-cloud } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: snok/install-poetry@v1
+        with: { version: "${{ env.POETRY_VERSION }}" }
+      - run: poetry install --no-interaction --no-root
+      - run: |
+          poetry run pytest tests/unit -x -q \
+            --cov=src --cov-report=xml --cov-fail-under=80
+      - uses: codecov/codecov-action@v5
+        with: { file: civio-cloud/coverage.xml, flags: cloud-unit }
+
+  test-flutter-unit:
+    runs-on: ubuntu-latest
+    needs: [lint-flutter]
+    defaults: { run: { working-directory: civio-app } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable }
+      - run: flutter pub get
+      - run: flutter test --coverage
+      - uses: codecov/codecov-action@v5
+        with: { file: civio-app/coverage/lcov.info, flags: flutter-unit }
+
+  # ========================================================================
+  # Integration tests
+  # ========================================================================
+  test-cloud-integration:
+    runs-on: ubuntu-latest
+    needs: [test-cloud-unit]
+    defaults: { run: { working-directory: civio-cloud } }
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: civio_test
+          POSTGRES_USER: civio
+          POSTGRES_PASSWORD: test_password
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports: ["6380:6379"]
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: civio
+          RABBITMQ_DEFAULT_PASS: test_password
+        ports: ["5673:5672"]
+    env:
+      DATABASE_URL: postgresql+asyncpg://civio:test_password@localhost:5433/civio_test
+      REDIS_URL: redis://localhost:6380/0
+      RABBITMQ_URL: amqp://civio:test_password@localhost:5673/
+      JWT_SECRET: test_secret_at_least_32_bytes_long_xxxxxx
+      OPENSIPS_AUTH_SHARED_SECRET: test_shared_secret_hex
+      ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: snok/install-poetry@v1
+        with: { version: "${{ env.POETRY_VERSION }}" }
+      - run: poetry install --no-interaction --no-root
+      - run: poetry run alembic upgrade head
+      - run: poetry run alembic check
+      - run: poetry run pytest tests/integration -x -q
+
+  # ========================================================================
+  # Contract tests (Schemathesis)
+  # ========================================================================
+  contract-tests:
+    runs-on: ubuntu-latest
+    needs: [test-cloud-integration]
+    defaults: { run: { working-directory: civio-cloud } }
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: civio_test
+          POSTGRES_USER: civio
+          POSTGRES_PASSWORD: test_password
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://civio:test_password@localhost:5433/civio_test
+      JWT_SECRET: test_secret_at_least_32_bytes_long_xxxxxx
+      ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - uses: snok/install-poetry@v1
+        with: { version: "${{ env.POETRY_VERSION }}" }
+      - run: poetry install --no-interaction --no-root
+      - run: poetry run alembic upgrade head
+      - name: Start API
+        run: poetry run uvicorn src.main:app --port 8000 &
+      - run: sleep 5 && curl -f http://localhost:8000/health || exit 1
+      - run: |
+          poetry run schemathesis run ../docs/03-api-contract.yaml \
+            --base-url http://localhost:8000 \
+            --checks all \
+            --hypothesis-max-examples 50
+
+  # ========================================================================
+  # Docker builds
+  # ========================================================================
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: [test-cloud-unit, test-flutter-unit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - run: docker compose config -q
+      - run: docker compose build
+
+  # ========================================================================
+  # E2E (SIPp + full stack)
+  # ========================================================================
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [build-docker, contract-tests]
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose -f docker-compose.e2e.yml up -d --wait
+      - run: ./scripts/e2e.sh
+      - if: always()
+        run: docker compose -f docker-compose.e2e.yml logs
+      - if: always()
+        run: docker compose -f docker-compose.e2e.yml down -v
+
+  # ========================================================================
+  # All-green gate (required by branch protection)
+  # ========================================================================
+  ci-passed:
+    runs-on: ubuntu-latest
+    needs:
+      - lint-cloud
+      - lint-flutter
+      - secrets-scan
+      - test-cloud-unit
+      - test-flutter-unit
+      - test-cloud-integration
+      - contract-tests
+      - build-docker
+      - e2e
+    steps:
+      - run: echo "All CI checks passed"

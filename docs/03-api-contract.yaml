@@ -1,0 +1,420 @@
+openapi: 3.1.0
+info:
+  title: Civio Cloud API
+  version: 1.0.0
+  description: |
+    Civio cloud control plane REST API. This document is the authoritative contract.
+    Claude Code MUST keep this file in sync with the FastAPI implementation.
+
+servers:
+  - url: https://api.civio.example.com/api/v1
+    description: Production
+  - url: http://localhost:8000/api/v1
+    description: Local development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    sharedSecretAuth:
+      type: apiKey
+      in: header
+      name: X-Civio-Shared-Secret
+      description: Used by OpenSIPS and edge sync agents
+
+  schemas:
+    OtpChallenge:
+      type: object
+      required: [challenge_id, mobile, expires_at]
+      properties:
+        challenge_id: { type: string, format: uuid }
+        mobile: { type: string, example: "+886912345678" }
+        expires_at: { type: string, format: date-time }
+
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type, expires_in]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, description: access token TTL in seconds }
+
+    Community:
+      type: object
+      required: [id, name, sip_domain, status, current_version]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sip_domain: { type: string }
+        status: { type: string, enum: [pending, ready, active, suspended] }
+        current_version: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+
+    User:
+      type: object
+      required: [id, community_id, name, mobile, role]
+      properties:
+        id: { type: string, format: uuid }
+        community_id: { type: string, format: uuid }
+        name: { type: string }
+        mobile: { type: string }
+        email: { type: string, format: email }
+        role: { type: string, enum: [owner, tenant, family, admin, staff] }
+        auth_status: { type: string, enum: [pending, verified, revoked] }
+        friendship_enabled: { type: boolean }
+
+    SipEndpoint:
+      type: object
+      description: Password field is NEVER returned
+      required: [id, user_id, username, transport, context]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        community_id: { type: string, format: uuid }
+        username: { type: string }
+        transport: { type: string, enum: [udp, tcp, tls, wss] }
+        context: { type: string }
+        webrtc_enabled: { type: boolean }
+
+    CallAuthRequest:
+      type: object
+      required: [caller_sip_uri, callee_sip_uri, call_id]
+      properties:
+        caller_sip_uri: { type: string }
+        callee_sip_uri: { type: string }
+        call_id: { type: string }
+
+    CallAuthDecision:
+      type: object
+      required: [decision, reason]
+      properties:
+        decision: { type: string, enum: [allow, deny] }
+        reason:
+          type: string
+          enum: [family, friend, admin_always, not_friend, no_token, cross_community, unknown_user, user_revoked]
+        billing_scope: { type: string, enum: [user, community, free], nullable: true }
+        max_duration_sec: { type: integer, nullable: true }
+
+    FriendMapping:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        user_a_id: { type: string, format: uuid }
+        user_b_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, active, blocked, removed] }
+        created_at: { type: string, format: date-time }
+
+    TokenBalance:
+      type: object
+      properties:
+        scope: { type: string, enum: [user, community] }
+        owner_id: { type: string, format: uuid }
+        balance: { type: string, description: "Decimal(18,4)" }
+        last_change_at: { type: string, format: date-time }
+
+    LedgerEntry:
+      type: object
+      properties:
+        id: { type: integer, format: int64 }
+        scope: { type: string }
+        delta: { type: string }
+        balance_after: { type: string }
+        reason: { type: string }
+        external_ref: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    CallLog:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        caller_user_id: { type: string, format: uuid, nullable: true }
+        callee_user_id: { type: string, format: uuid, nullable: true }
+        call_status: { type: string }
+        start_time: { type: string, format: date-time }
+        duration_sec: { type: integer }
+        token_cost: { type: string }
+        hangup_cause: { type: string, nullable: true }
+
+    DeltaBatch:
+      type: object
+      required: [community_id, from_version, to_version, rows]
+      properties:
+        community_id: { type: string, format: uuid }
+        from_version: { type: integer, format: int64 }
+        to_version: { type: integer, format: int64 }
+        rows:
+          type: array
+          items:
+            type: object
+            required: [entity_type, entity_id, operation, data, version]
+            properties:
+              entity_type: { type: string }
+              entity_id: { type: string, format: uuid }
+              operation: { type: string, enum: [upsert, tombstone] }
+              data: { type: object }
+              version: { type: integer, format: int64 }
+
+    SyncAckRequest:
+      type: object
+      required: [community_id, version, merkle_root]
+      properties:
+        community_id: { type: string, format: uuid }
+        version: { type: integer, format: int64 }
+        merkle_root: { type: string }
+
+    SyncAckResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, merkle_mismatch, stale_version] }
+        expected_merkle_root: { type: string, nullable: true }
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: { type: object }
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/otp/send:
+    post:
+      tags: [auth]
+      security: []
+      summary: Send OTP to mobile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mobile]
+              properties:
+                mobile: { type: string }
+      responses:
+        '200':
+          description: OTP dispatched
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OtpChallenge' }
+        '429': { description: Rate limited }
+
+  /auth/otp/verify:
+    post:
+      tags: [auth]
+      security: []
+      summary: Verify OTP and return tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, code]
+              properties:
+                challenge_id: { type: string, format: uuid }
+                code: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401': { description: Invalid OTP }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      responses:
+        '204': { description: Logged out }
+
+  /users/me:
+    get:
+      tags: [users]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+
+  /sip/authorize:
+    post:
+      tags: [sip]
+      security:
+        - sharedSecretAuth: []
+      summary: Called by OpenSIPS for each INVITE
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CallAuthRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CallAuthDecision' }
+
+  /sip/endpoints/{user_id}:
+    get:
+      tags: [sip]
+      parameters:
+        - in: path
+          name: user_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SipEndpoint' }
+
+  /friends:
+    get:
+      tags: [friends]
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FriendMapping' }
+    post:
+      tags: [friends]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_user_id]
+              properties:
+                target_user_id: { type: string, format: uuid }
+      responses:
+        '201':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FriendMapping' }
+
+  /tokens/balance:
+    get:
+      tags: [tokens]
+      parameters:
+        - in: query
+          name: scope
+          schema: { type: string, enum: [user, community] }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenBalance' }
+
+  /tokens/ledger:
+    get:
+      tags: [tokens]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50 }
+        - in: query
+          name: before
+          schema: { type: integer, format: int64, description: ledger id cursor }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/LedgerEntry' }
+
+  /cdr:
+    get:
+      tags: [cdr]
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date-time }
+        - in: query
+          name: to
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CallLog' }
+
+  /sync/full:
+    get:
+      tags: [sync]
+      security:
+        - sharedSecretAuth: []
+      responses:
+        '200':
+          description: Full snapshot, paginated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  community_id: { type: string, format: uuid }
+                  version: { type: integer, format: int64 }
+                  rows: { type: array, items: { type: object } }
+                  next_cursor: { type: string, nullable: true }
+
+  /sync/delta:
+    get:
+      tags: [sync]
+      security:
+        - sharedSecretAuth: []
+      parameters:
+        - in: query
+          name: since
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeltaBatch' }
+
+  /sync/ack:
+    post:
+      tags: [sync]
+      security:
+        - sharedSecretAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SyncAckRequest' }
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncAckResponse' }

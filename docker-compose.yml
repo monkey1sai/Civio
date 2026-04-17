@@ -1,0 +1,122 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    command:
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.sip.address=:5060
+      - --entrypoints.sips.address=:5061
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [civio]
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-civio}
+      POSTGRES_USER: ${POSTGRES_USER:-civio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports: ["5432:5432"]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-civio}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [civio]
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    ports: ["6379:6379"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      retries: 5
+    networks: [civio]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-civio}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: civio
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks: [civio]
+
+  opensips:
+    build: ./civio-cloud/opensips
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "5061:5061/tcp"
+    environment:
+      OPENSIPS_DB_URL: postgres://${POSTGRES_USER:-civio}:${POSTGRES_PASSWORD}@postgres:5432/civio
+      OPENSIPS_AUTH_SHARED_SECRET: ${OPENSIPS_AUTH_SHARED_SECRET}
+      CLOUD_AUTH_URL: http://civio-cloud-api:8000/api/v1/sip/authorize
+    networks: [civio]
+
+  civio-cloud-api:
+    build:
+      context: ./civio-cloud
+      target: api
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-civio}:${POSTGRES_PASSWORD}@postgres:5432/civio
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-civio}:${RABBITMQ_PASSWORD}@rabbitmq:5672/civio
+      JWT_SECRET: ${JWT_SECRET}
+      OPENSIPS_AUTH_SHARED_SECRET: ${OPENSIPS_AUTH_SHARED_SECRET}
+      ENV: local
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.api.rule=Host(`api.civio.local`)
+      - traefik.http.routers.api.entrypoints=web
+      - traefik.http.services.api.loadbalancer.server.port=8000
+    networks: [civio]
+
+  civio-cloud-worker:
+    build:
+      context: ./civio-cloud
+      target: worker
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-civio}:${POSTGRES_PASSWORD}@postgres:5432/civio
+      RABBITMQ_URL: amqp://${RABBITMQ_USER:-civio}:${RABBITMQ_PASSWORD}@rabbitmq:5672/civio
+      ENV: local
+    networks: [civio]
+
+networks:
+  civio:
+    driver: bridge
+
+volumes:
+  pg_data:
+  redis_data:
+  rabbitmq_data:
