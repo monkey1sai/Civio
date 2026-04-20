@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,26 +24,55 @@ jobs:
     defaults: { run: { working-directory: civio-cloud } }
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-cloud is initialized
+        id: check_cloud
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-cloud not yet initialized, skipping lint"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - uses: snok/install-poetry@v1
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { version: "${{ env.POETRY_VERSION }}" }
-      - run: poetry install --no-interaction --no-root
-      - run: poetry run ruff check src/ tests/
-      - run: poetry run ruff format --check src/ tests/
-      - run: poetry run mypy src/ --strict
-      - run: poetry run bandit -r src/ -ll
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry install --no-interaction --no-root
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run ruff check src/ tests/
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run ruff format --check src/ tests/
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run mypy src/ --strict
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run bandit -r src/ -ll
 
   lint-flutter:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: civio-app } }
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-app is initialized
+        id: check_app
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-app not yet initialized, skipping lint"
+          fi
       - uses: subosito/flutter-action@v2
+        if: steps.check_app.outputs.exists == 'true'
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable }
-      - run: flutter pub get
-      - run: dart format --set-exit-if-changed lib/ test/
-      - run: dart analyze --fatal-infos lib/ test/
+      - if: steps.check_app.outputs.exists == 'true'
+        run: flutter pub get
+      - if: steps.check_app.outputs.exists == 'true'
+        run: dart format --set-exit-if-changed lib/ test/
+      - if: steps.check_app.outputs.exists == 'true'
+        run: dart analyze --fatal-infos lib/ test/
 
   secrets-scan:
     runs-on: ubuntu-latest
@@ -62,15 +91,29 @@ jobs:
     defaults: { run: { working-directory: civio-cloud } }
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-cloud is initialized
+        id: check_cloud
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-cloud not yet initialized, skipping unit tests"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - uses: snok/install-poetry@v1
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { version: "${{ env.POETRY_VERSION }}" }
-      - run: poetry install --no-interaction --no-root
-      - run: |
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry install --no-interaction --no-root
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: |
           poetry run pytest tests/unit -x -q \
             --cov=src --cov-report=xml --cov-fail-under=80
-      - uses: codecov/codecov-action@v5
+      - if: steps.check_cloud.outputs.exists == 'true'
+        uses: codecov/codecov-action@v5
         with: { file: civio-cloud/coverage.xml, flags: cloud-unit }
 
   test-flutter-unit:
@@ -79,11 +122,24 @@ jobs:
     defaults: { run: { working-directory: civio-app } }
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-app is initialized
+        id: check_app
+        run: |
+          if [ -f pubspec.yaml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-app not yet initialized, skipping unit tests"
+          fi
       - uses: subosito/flutter-action@v2
+        if: steps.check_app.outputs.exists == 'true'
         with: { flutter-version: "${{ env.FLUTTER_VERSION }}", channel: stable }
-      - run: flutter pub get
-      - run: flutter test --coverage
-      - uses: codecov/codecov-action@v5
+      - if: steps.check_app.outputs.exists == 'true'
+        run: flutter pub get
+      - if: steps.check_app.outputs.exists == 'true'
+        run: flutter test --coverage
+      - if: steps.check_app.outputs.exists == 'true'
+        uses: codecov/codecov-action@v5
         with: { file: civio-app/coverage/lcov.info, flags: flutter-unit }
 
   # ========================================================================
@@ -124,14 +180,29 @@ jobs:
       ENV: test
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-cloud is initialized
+        id: check_cloud
+        run: |
+          if [ -f pyproject.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-cloud not yet initialized, skipping integration tests"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - uses: snok/install-poetry@v1
+        if: steps.check_cloud.outputs.exists == 'true'
         with: { version: "${{ env.POETRY_VERSION }}" }
-      - run: poetry install --no-interaction --no-root
-      - run: poetry run alembic upgrade head
-      - run: poetry run alembic check
-      - run: poetry run pytest tests/integration -x -q
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry install --no-interaction --no-root
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run alembic upgrade head
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run alembic check
+      - if: steps.check_cloud.outputs.exists == 'true'
+        run: poetry run pytest tests/integration -x -q
 
   # ========================================================================
   # Contract tests (Schemathesis)
@@ -159,16 +230,32 @@ jobs:
       ENV: test
     steps:
       - uses: actions/checkout@v4
+      - name: Check if civio-cloud FastAPI app is initialized
+        id: check_api
+        run: |
+          if [ -f src/main.py ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "civio-cloud FastAPI app not yet initialized, skipping contract tests"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.check_api.outputs.exists == 'true'
         with: { python-version: "${{ env.PYTHON_VERSION }}" }
       - uses: snok/install-poetry@v1
+        if: steps.check_api.outputs.exists == 'true'
         with: { version: "${{ env.POETRY_VERSION }}" }
-      - run: poetry install --no-interaction --no-root
-      - run: poetry run alembic upgrade head
+      - if: steps.check_api.outputs.exists == 'true'
+        run: poetry install --no-interaction --no-root
+      - if: steps.check_api.outputs.exists == 'true'
+        run: poetry run alembic upgrade head
       - name: Start API
+        if: steps.check_api.outputs.exists == 'true'
         run: poetry run uvicorn src.main:app --port 8000 &
-      - run: sleep 5 && curl -f http://localhost:8000/health || exit 1
-      - run: |
+      - if: steps.check_api.outputs.exists == 'true'
+        run: sleep 5 && curl -f http://localhost:8000/health || exit 1
+      - if: steps.check_api.outputs.exists == 'true'
+        run: |
           poetry run schemathesis run ../docs/03-api-contract.yaml \
             --base-url http://localhost:8000 \
             --checks all \
@@ -184,7 +271,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - run: docker compose config -q
-      - run: docker compose build
+      - name: Check if Dockerfiles exist
+        id: check_dockerfile
+        run: |
+          if [ -f civio-cloud/Dockerfile ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No Dockerfile yet, skipping docker compose build"
+          fi
+      - if: steps.check_dockerfile.outputs.exists == 'true'
+        run: docker compose build
 
   # ========================================================================
   # E2E (SIPp + full stack)
@@ -194,12 +291,24 @@ jobs:
     needs: [build-docker, contract-tests]
     steps:
       - uses: actions/checkout@v4
-      - run: cp .env.example .env
-      - run: docker compose -f docker-compose.e2e.yml up -d --wait
-      - run: ./scripts/e2e.sh
-      - if: always()
+      - name: Check if e2e stack is defined
+        id: check_e2e
+        run: |
+          if [ -f docker-compose.e2e.yml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "e2e stack not yet defined (Phase 10), skipping"
+          fi
+      - if: steps.check_e2e.outputs.exists == 'true'
+        run: cp .env.example .env
+      - if: steps.check_e2e.outputs.exists == 'true'
+        run: docker compose -f docker-compose.e2e.yml up -d --wait
+      - if: steps.check_e2e.outputs.exists == 'true'
+        run: ./scripts/e2e.sh
+      - if: ${{ always() && steps.check_e2e.outputs.exists == 'true' }}
         run: docker compose -f docker-compose.e2e.yml logs
-      - if: always()
+      - if: ${{ always() && steps.check_e2e.outputs.exists == 'true' }}
         run: docker compose -f docker-compose.e2e.yml down -v
 
   # ========================================================================
@@ -207,6 +316,7 @@ jobs:
   # ========================================================================
   ci-passed:
     runs-on: ubuntu-latest
+    if: always()
     needs:
       - lint-cloud
       - lint-flutter
@@ -218,4 +328,12 @@ jobs:
       - build-docker
       - e2e
     steps:
-      - run: echo "All CI checks passed"
+      - name: Verify no upstream job failed
+        run: |
+          results='${{ join(needs.*.result, ',') }}'
+          echo "Upstream results: $results"
+          if echo "$results" | tr ',' '\n' | grep -qE '^(failure|cancelled)$'; then
+            echo "At least one required job failed or was cancelled"
+            exit 1
+          fi
+          echo "All upstream jobs succeeded or were skipped"

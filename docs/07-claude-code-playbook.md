@@ -71,6 +71,8 @@ docker compose config -q            # compose file is valid
 git log --oneline | head -1         # at least one commit exists
 ```
 
+> **CI 漸進式策略**:ci.yml 已配置成「子專案未初始化則跳過」,所以 Phase 1~8 期間會看到部分 CI job 被 skip,這是預期行為,不是 bug。每個 Phase 完成對應子專案初始化後,相關 CI 會自動啟用。
+
 ---
 
 ## Phase 2 — Cloud data layer (models + migrations)
