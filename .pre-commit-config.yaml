@@ -26,10 +26,12 @@ repos:
     hooks:
       - id: mypy
         files: ^civio-cloud/src/
-        args: [--strict, --ignore-missing-imports]
+        args: [--config-file=civio-cloud/pyproject.toml, --strict, --ignore-missing-imports]
         additional_dependencies:
           - pydantic>=2.10
+          - pydantic-settings>=2.7
           - sqlalchemy>=2.0
+          - asyncpg>=0.30
           - types-redis
 
   - repo: https://github.com/PyCQA/bandit
