@@ -73,3 +73,7 @@ logs/
 # Testing
 test-results/
 playwright-report/
+
+# Claude Code — local/session state (permissions, etc). Slash commands in
+# .claude/commands/ are committed; everything local stays untracked.
+.claude/settings.local.json
