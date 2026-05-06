@@ -21,6 +21,9 @@ pydantic = "^2.10"
 pydantic-settings = "^2.7"
 python-jose = {extras = ["cryptography"], version = "^3.3"}
 passlib = {extras = ["bcrypt"], version = "^1.7"}
+# passlib 1.7.4 reads ``bcrypt.__about__.__version__`` which was removed in
+# bcrypt 4.1+; pin to the last compatible line until passlib cuts a new release.
+bcrypt = "<4.1"
 aio-pika = "^9.5"
 redis = {extras = ["hiredis"], version = "^5.2"}
 structlog = "^24.4"
@@ -33,6 +36,7 @@ pytest-asyncio = "^0.24"
 pytest-cov = "^6.0"
 ruff = "^0.8"
 mypy = "^1.13"
+fakeredis = "^2.26"
 
 [build-system]
 requires = ["poetry-core>=2.0.0"]
@@ -58,6 +62,21 @@ select = [
 ]
 ignore = [
     "E501",  # line length handled by formatter
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's DI helpers are intentionally called in argument defaults; ruff's
+# B008 would flag every router parameter otherwise.
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Security",
 ]
 
 [tool.ruff.format]
